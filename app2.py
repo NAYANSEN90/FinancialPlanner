@@ -1,4 +1,21 @@
 
+from concurrent.futures import ThreadPoolExecutor
+from scanner import scan_stocks_for_pattern
+import streamlit as st
+import threading
+import queue
+
+def scanner_thread(pattern_name, interval, start_date, end_date, result_queue, cancel_event, progress_queue=None):
+    def progress_callback(symbol):
+        if progress_queue:
+            progress_queue.put(symbol)
+    results = scan_stocks_for_pattern(pattern_name, interval, start_date, end_date, cancel_event, progress_callback)
+    result_queue.put({
+        'pattern': pattern_name,
+        'results': results,
+        'cancelled': cancel_event.is_set() if cancel_event else False
+    })
+
 # --- Bollinger Bands Toggle (place after Streamlit setup, before chart rendering) ---
 def on_bollinger_toggle():
     st.session_state['show_chart_auto2'] = True
@@ -18,9 +35,7 @@ def show_custom_strategy_panel():
     )
     analyze_btn = st.button("Analyze Strategy", key="analyze_strategy_btn")
     if analyze_btn and custom_strategy.strip():
-        # Placeholder for strategy parsing and analysis
         st.info(f"Strategy submitted: {custom_strategy}")
-        # Here you would parse the strategy and apply it to the chart/indicators
         st.warning("Strategy parsing and execution is not yet implemented. This is a placeholder for future AI-powered analysis.")
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -338,18 +353,108 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
 
 # ========== MAIN APP ENTRYPOINT ========== #
 def main():
-    ema_controls()
+    # --- Main Chart and Controls UI ---
+    st.markdown("## Stock Chart Viewer")
     symbol, interval, start_date, end_date = toolbar_and_date()
-    show_boll = bollinger_toggle()
+    ema_controls()
+    show_bollinger = bollinger_toggle()
     show_pivot_highs, show_pivot_lows = pivot_toggles()
     show_custom_strategy_panel()
-    show_chart = st.button("Show Chart (Plotly)", key="show_chart_btn2")
-    if st.session_state.get('show_chart_auto2', False):
-        show_chart = True
-        st.session_state['show_chart_auto2'] = False
-    if show_chart:
-        render_charts(symbol, interval, start_date, end_date, show_boll, show_pivot_highs, show_pivot_lows)
+    render_charts(symbol, interval, start_date, end_date, show_bollinger, show_pivot_highs, show_pivot_lows)
+    # --- Ensure scanner session state keys are initialized ---
+    if 'scanner_status' not in st.session_state:
+        st.session_state['scanner_status'] = 'idle'  # idle, running, done
+    if 'scanner_results' not in st.session_state:
+        st.session_state['scanner_results'] = []
+    if 'scanner_pattern' not in st.session_state:
+        st.session_state['scanner_pattern'] = None
+    if 'scanner_toast' not in st.session_state:
+        st.session_state['scanner_toast'] = False
+    if 'show_results_drawer' not in st.session_state:
+        st.session_state['show_results_drawer'] = False
+    if 'scanner_cancel' not in st.session_state:
+        st.session_state['scanner_cancel'] = False
+    if 'scanner_cancel_event' not in st.session_state:
+        st.session_state['scanner_cancel_event'] = threading.Event()
+    if 'scanner_queue' not in st.session_state:
+        st.session_state['scanner_queue'] = queue.Queue()
+    scan_running = st.session_state['scanner_status'] == 'running'
+    scan_btn = st.sidebar.button("Scan for Pattern", key="scan_btn", disabled=scan_running)
+    cancel_btn = st.sidebar.button("Cancel Scan", key="cancel_btn", disabled=not scan_running)
 
+    # --- Drawer/Sidebar: Candlestick Pattern Selector ---
+    st.sidebar.header("Candlestick Pattern Scanner")
+    candlestick_patterns = [
+        "Hammer", "Inverted Hammer", "Bullish Engulfing", "Bearish Engulfing", "Morning Star", "Evening Star",
+        "Doji", "Shooting Star", "Hanging Man", "Piercing Line", "Dark Cloud Cover",
+        "3 White Soldiers", "3 Black Crows", "Sandwich"
+    ]
+    selected_pattern = st.sidebar.selectbox("Select Candlestick Pattern", candlestick_patterns, key="pattern_select")
 
-if __name__ == "__main__" or True:
-    main()
+    # Check for results from the scanner thread
+    try:
+        while not st.session_state['scanner_queue'].empty():
+            result = st.session_state['scanner_queue'].get_nowait()
+            st.session_state['scanner_results'] = result['results']
+            st.session_state['scanner_pattern'] = result['pattern']
+            if result['cancelled']:
+                st.session_state['scanner_status'] = 'idle'
+            else:
+                st.session_state['scanner_status'] = 'done'
+                st.session_state['scanner_toast'] = True
+            st.session_state['scanner_cancel'] = False
+    except Exception:
+        pass
+
+    if scan_btn and selected_pattern:
+        if st.session_state['scanner_status'] != 'running':
+            st.session_state['scanner_status'] = 'running'
+            st.session_state['scanner_results'] = []
+            st.session_state['scanner_pattern'] = selected_pattern
+            st.session_state['scanner_toast'] = False
+            st.session_state['show_results_drawer'] = True
+            st.session_state['scanner_cancel'] = False
+            st.session_state['scanner_cancel_event'].clear()
+            # Use ThreadPoolExecutor to manage threads efficiently
+            executor = getattr(st.session_state, 'scanner_executor', None)
+            if executor is None:
+                executor = ThreadPoolExecutor(max_workers=2)
+                st.session_state['scanner_executor'] = executor
+            # Create a progress queue for UI updates
+            if 'scanner_progress_queue' not in st.session_state:
+                st.session_state['scanner_progress_queue'] = queue.Queue()
+            executor.submit(
+                scanner_thread,
+                selected_pattern, interval, start_date, end_date,
+                st.session_state['scanner_queue'],
+                st.session_state['scanner_cancel_event'],
+                st.session_state['scanner_progress_queue']
+            )
+
+    # Cancel scan logic: set the cancel event to stop the scanner thread
+    if cancel_btn and st.session_state['scanner_status'] == 'running':
+        st.session_state['scanner_cancel'] = True
+        st.session_state['scanner_cancel_event'].set()
+    # Show scanning progress in UI
+    current_scanning = None
+    try:
+        while not st.session_state.get('scanner_progress_queue', queue.Queue()).empty():
+            current_scanning = st.session_state['scanner_progress_queue'].get_nowait()
+    except Exception:
+        pass
+    if st.session_state['scanner_status'] == 'running' and current_scanning:
+        st.sidebar.info(f"Scanning: {current_scanning}")
+    if cancel_btn and st.session_state['scanner_status'] == 'running':
+        st.session_state['scanner_cancel'] = True
+        st.session_state['scanner_cancel_event'].set()
+
+    # Toast alert when scan is done
+    if st.session_state.get('scanner_toast', False):
+        st.sidebar.success(f"Scan done: {len(st.session_state['scanner_results'])} results found.")
+        st.session_state['scanner_toast'] = False
+
+    # Show status and results in drawer
+    if st.session_state['scanner_status'] == 'running':
+        st.sidebar.info("Scanning all stocks for pattern... (non-blocking)")
+
+main()
