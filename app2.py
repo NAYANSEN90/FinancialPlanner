@@ -1,3 +1,25 @@
+
+# --- Technical Analysis Panel: Custom Strategy Input ---
+def show_custom_strategy_panel():
+    st.markdown("<div style='background-color:#e3e6ea;padding:10px 0 10px 0;margin-bottom:10px;'><b>Technical Analysis: Custom Strategy</b>", unsafe_allow_html=True)
+    custom_strategy = st.text_area(
+        "Describe your strategy in English (e.g. 'Show a buy signal when the 20 EMA crosses above the 50 EMA and RSI is below 40'):",
+        value="",
+        key="custom_strategy_input"
+    )
+    analyze_btn = st.button("Analyze Strategy", key="analyze_strategy_btn")
+    if analyze_btn and custom_strategy.strip():
+        # Placeholder for strategy parsing and analysis
+        st.info(f"Strategy submitted: {custom_strategy}")
+        # Here you would parse the strategy and apply it to the chart/indicators
+        st.warning("Strategy parsing and execution is not yet implemented. This is a placeholder for future AI-powered analysis.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ...existing code...
+
+# Call the panel after Streamlit is imported and initialized
+# (Move this call to just after Streamlit initialization and before the rest of the UI)
 import streamlit as st
 import pandas as pd
 import plotly.graph_objs as go
@@ -95,11 +117,14 @@ import numpy as np
 
 # --- Pivot High/Low Toggle ---
 st.markdown("<div style='background-color:#e3e6ea;padding:10px 0 10px 0;margin-bottom:10px;'><b>Technical Analysis: Pivots</b>", unsafe_allow_html=True)
+def on_pivot_toggle():
+    st.session_state['show_chart_auto2'] = True
+
 pivot_col1, pivot_col2 = st.columns(2)
 with pivot_col1:
-    show_pivot_highs = st.checkbox("Show Pivot Highs", value=False, key="show_pivot_highs")
+    show_pivot_highs = st.checkbox("Show Pivot Highs", value=False, key="show_pivot_highs", on_change=on_pivot_toggle)
 with pivot_col2:
-    show_pivot_lows = st.checkbox("Show Pivot Lows", value=False, key="show_pivot_lows")
+    show_pivot_lows = st.checkbox("Show Pivot Lows", value=False, key="show_pivot_lows", on_change=on_pivot_toggle)
 st.markdown("</div>", unsafe_allow_html=True)
 
 if 'show_chart_auto2' not in st.session_state:
@@ -219,6 +244,28 @@ if show_chart:
             xaxis_rangeslider_visible=False,
             height=700,
             dragmode='pan'
+        )
+        # Add crosshair (dotted) hovermode
+        fig.update_layout(
+            hovermode='x',
+            xaxis=dict(
+                showspikes=True,
+                spikemode='across',
+                spikesnap='cursor',
+                showline=True,
+                spikedash='dot',
+                spikethickness=1,
+                spikecolor='black',
+            ),
+            yaxis=dict(
+                showspikes=True,
+                spikemode='across',
+                spikesnap='cursor',
+                showline=True,
+                spikedash='dot',
+                spikethickness=1,
+                spikecolor='black',
+            )
         )
         st.plotly_chart(
             fig,
