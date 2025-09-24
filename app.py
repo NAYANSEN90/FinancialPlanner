@@ -49,12 +49,67 @@ def plot_candlestick(data, symbol):
     if cleaned is None or cleaned.empty:
         st.warning("Data is not suitable for candlestick plotting.")
         return
-   
-    # Use returnfig=True and do not pass ax
-    fig, _ = mpf.plot(cleaned, type='candle', style='charles', volume=True, title=f'{symbol} Candlestick Chart', returnfig=True)
+
+    # Prepare EMA overlays and legend info
+    addplots = []
+    legend_labels = []
+    legend_colors = []
+    for i, ema in enumerate(st.session_state.get('ema_list', [])):
+        if ema['visible']:
+            color = f'C{i}'
+            ema_series = cleaned['Close'].ewm(span=ema['period'], adjust=False).mean()
+            addplots.append(mpf.make_addplot(ema_series, color=color, width=1.5, ylabel=f'EMA {ema["period"]}'))
+            legend_labels.append(f'EMA {ema["period"]}')
+            legend_colors.append(color)
+
+    # Plot candlestick and volume in separate panels, with EMA overlays
+    fig, axes = mpf.plot(
+        cleaned,
+        type='candle',
+        style='charles',
+        volume=True,
+        title=f'{symbol} Candlestick Chart',
+        returnfig=True,
+        figratio=(10,6),
+        figscale=1.1,
+        addplot=addplots if addplots else None
+    )
+
+    # Add legend for EMAs (on price axis)
+    if legend_labels and hasattr(axes, '__getitem__'):
+        import matplotlib.patches as mpatches
+        price_ax = axes[0] if isinstance(axes, (list, tuple)) else axes
+        handles = [mpatches.Patch(color=legend_colors[i], label=legend_labels[i]) for i in range(len(legend_labels))]
+        price_ax.legend(handles=handles, loc='upper left')
+
     st.pyplot(fig)
 
 
+
+
+# --- Indicator Section: EMA controls ---
+st.markdown("<div style='background-color:#e3e6ea;padding:10px 0 10px 0;margin-bottom:10px;'><b>Indicators: Exponential Moving Average (EMA)</b>", unsafe_allow_html=True)
+if 'ema_list' not in st.session_state:
+    st.session_state['ema_list'] = [{'period': 20, 'visible': True}]
+
+ema_cols = st.columns([2,2,2,2,2])
+
+def refresh_chart_on_ema_toggle():
+    st.session_state['show_chart_auto'] = True
+
+for i, ema in enumerate(st.session_state['ema_list']):
+    with ema_cols[i % 5]:
+        st.session_state['ema_list'][i]['period'] = st.number_input(f"EMA {i+1} Period", min_value=1, max_value=200, value=ema['period'], key=f"ema_period_{i}")
+        st.session_state['ema_list'][i]['visible'] = st.checkbox(f"Show EMA {i+1}", value=ema['visible'], key=f"ema_visible_{i}", on_change=refresh_chart_on_ema_toggle)
+
+add_ema = st.button("Add EMA", key="add_ema_btn")
+if add_ema:
+    st.session_state['ema_list'].append({'period': 20, 'visible': True})
+
+remove_ema = st.button("Remove Last EMA", key="remove_ema_btn")
+if remove_ema and len(st.session_state['ema_list']) > 1:
+    st.session_state['ema_list'].pop()
+st.markdown("</div>", unsafe_allow_html=True)
 
 # Streamlit UI
 st.set_page_config(layout="wide")
@@ -81,14 +136,26 @@ if 'interval' not in st.session_state:
 st.markdown("<div style='background-color:#f0f2f6;padding:10px 0 10px 0;margin-bottom:10px;'><h2 style='display:inline;margin-right:30px;'>NSE Stock Candlestick Viewer</h2>", unsafe_allow_html=True)
 toolbar1_col1, toolbar1_col2 = st.columns([3,1])
 
+
 # Callback to update chart_name_input when watchlist selection changes
 def update_chart_name_from_watchlist():
     st.session_state['chart_name_input'] = st.session_state['selected_symbol']
 
+# Callback to refresh chart when interval changes
+def refresh_chart_on_interval():
+    st.session_state['interval'] = st.session_state['interval_select']
+    st.session_state['show_chart_auto'] = True
+
 with toolbar1_col1:
     chart_name = st.text_input("Chart Name (Symbol)", value=st.session_state['selected_symbol'], key="chart_name_input")
 with toolbar1_col2:
-    interval = st.selectbox("Interval", ["1d", "1wk", "1mo"], index=["1d", "1wk", "1mo"].index(st.session_state['interval']), key="interval_select")
+    interval = st.selectbox(
+        "Interval",
+        ["1d", "1wk", "1mo"],
+        index=["1d", "1wk", "1mo"].index(st.session_state['interval']),
+        key="interval_select",
+        on_change=refresh_chart_on_interval
+    )
 st.markdown("</div>", unsafe_allow_html=True)
 
 # --- Main Layout: Chart Center, Watchlist Right ---
@@ -126,9 +193,16 @@ with toolbar2_col2:
 st.markdown("</div>", unsafe_allow_html=True)
 
 # --- Chart Display Logic ---
+if 'show_chart_auto' not in st.session_state:
+    st.session_state['show_chart_auto'] = False
 with main_col:
     st.subheader(f"Candlestick Chart: {st.session_state['selected_symbol']}")
-    if st.button("Show Chart", key="show_chart_btn"):
+    show_chart = st.button("Show Chart", key="show_chart_btn")
+    # Auto-refresh chart if interval changed
+    if st.session_state['show_chart_auto']:
+        show_chart = True
+        st.session_state['show_chart_auto'] = False
+    if show_chart:
         # Use chart_name input as the selected symbol
         symbol = st.session_state['chart_name_input'].upper()
         st.session_state['selected_symbol'] = symbol
