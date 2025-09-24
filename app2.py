@@ -93,6 +93,14 @@ def compute_rsi(series, period=14):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
+def compute_stochastic(df, k_period=14, d_period=3, smooth_k=3):
+    low_min = df['Low'].rolling(window=k_period, min_periods=1).min()
+    high_max = df['High'].rolling(window=k_period, min_periods=1).max()
+    percent_k = 100 * (df['Close'] - low_min) / (high_max - low_min)
+    percent_k = percent_k.rolling(window=smooth_k, min_periods=1).mean()
+    percent_d = percent_k.rolling(window=d_period, min_periods=1).mean()
+    return percent_k, percent_d
+
 # ========== UI Sections ========== #
 def ema_controls():
     st.markdown("<div style='background-color:#e3e6ea;padding:10px 0 10px 0;margin-bottom:10px;'><b>Indicators: Exponential Moving Average (EMA)</b>", unsafe_allow_html=True)
@@ -171,6 +179,8 @@ def show_custom_strategy_panel():
 
 def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_pivot_highs, show_pivot_lows):
     from stock_data import _stock_data_cache
+    from plotly.subplots import make_subplots
+    import plotly.graph_objs as go
     start_str = start_date.strftime("%Y-%m-%d")
     end_str = end_date.strftime("%Y-%m-%d")
     chart_data = fetch_stock_chart_data(symbol, start_date=start_str, end_date=end_str, interval=interval)
@@ -197,15 +207,15 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
     if chart_data_window.empty:
         st.warning("No chart data available for this stock.")
         return
-    from plotly.subplots import make_subplots
     rsi_full = compute_rsi(full_data['Close'])
     rsi = rsi_full.loc[chart_data_window.index]
+    stoch_k, stoch_d = compute_stochastic(chart_data_window, 14, 3, 3)
     fig = make_subplots(
-        rows=3, cols=1,
+        rows=4, cols=1,
         shared_xaxes=True,
         vertical_spacing=0.04,
-        row_heights=[0.6, 0.2, 0.2],
-        subplot_titles=(f"{symbol} Candlestick Chart", f"{symbol} RSI (14)", "Volume")
+        row_heights=[0.5, 0.15, 0.15, 0.2],
+        subplot_titles=(f"{symbol} Candlestick Chart", f"{symbol} RSI (14)", "Stochastic (14,3,3)", "Volume")
     )
     # Candlestick chart (row 1)
     fig.add_trace(go.Candlestick(
@@ -215,7 +225,7 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
         low=chart_data_window['Low'],
         close=chart_data_window['Close'],
         name='Candlestick'), row=1, col=1)
-    # EMA, Bollinger, Pivots, Dow Theory (row 1)
+    # EMA overlays
     color_cycle = ['#e377c2', '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
     for i, ema in enumerate(st.session_state['ema_list']):
         if ema['visible']:
@@ -228,6 +238,7 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
                 name=f'EMA {ema["period"]}',
                 line=dict(color=color_cycle[i % len(color_cycle)], width=2)
             ), row=1, col=1)
+    # Bollinger Bands
     if show_bollinger:
         close_full = full_data['Close']
         bb_ma = close_full.rolling(window=20).mean().loc[chart_data_window.index]
@@ -250,6 +261,7 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
             line=dict(color='blue', width=1, dash='dot'),
             opacity=0.7
         ), row=1, col=1)
+    # Pivots
     pivot_marker_size = 16
     pivot_high_indices = find_pivots(chart_data_window['High'], window=3, mode='high') if show_pivot_highs else []
     pivot_low_indices = find_pivots(chart_data_window['Low'], window=3, mode='low') if show_pivot_lows else []
@@ -271,6 +283,7 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
             name='Pivot Low',
             hoverinfo='x+y+name'
         ), row=1, col=1)
+    # Dow Theory Regions and Markers
     show_dow_theory = st.session_state.get('show_dow_theory', False)
     if show_dow_theory and (pivot_high_indices or pivot_low_indices):
         regions = determine_dow_theory_regions(chart_data_window, chart_data_window.index[pivot_high_indices], chart_data_window.index[pivot_low_indices])
@@ -307,14 +320,31 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
     ), row=2, col=1)
     fig.add_hline(y=60, line_dash="dash", line_color="red", annotation_text="Overbought", annotation_position="top right", row=2)
     fig.add_hline(y=40, line_dash="dash", line_color="green", annotation_text="Oversold", annotation_position="bottom right", row=2)
-    # Volume (row 3)
+    # Stochastic (row 3)
+    fig.add_trace(go.Scatter(
+        x=chart_data_window.index,
+        y=stoch_k,
+        mode='lines',
+        name='%K',
+        line=dict(color='blue', width=2)
+    ), row=3, col=1)
+    fig.add_trace(go.Scatter(
+        x=chart_data_window.index,
+        y=stoch_d,
+        mode='lines',
+        name='%D',
+        line=dict(color='orange', width=2, dash='dash')
+    ), row=3, col=1)
+    fig.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="Overbought", annotation_position="top right", row=3)
+    fig.add_hline(y=20, line_dash="dash", line_color="green", annotation_text="Oversold", annotation_position="bottom right", row=3)
+    # Volume (row 4)
     fig.add_trace(go.Bar(
         x=chart_data_window.index,
         y=chart_data_window['Volume'],
         name='Volume',
         marker_color='rgba(50,50,150,0.7)',
         opacity=0.4
-    ), row=3, col=1)
+    ), row=4, col=1)
     vol_ma20 = full_data['Volume'].rolling(window=20).mean().loc[chart_data_window.index]
     fig.add_trace(go.Scatter(
         x=chart_data_window.index,
@@ -322,10 +352,17 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
         mode='lines',
         name='Volume MA 20',
         line=dict(color='orange', width=2, dash='dash')
-    ), row=3, col=1)
+    ), row=4, col=1)
+    # Layout
     fig.update_layout(
-        height=1000,
-        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        height=1200,
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='left',
+            x=0
+        ),
         xaxis_rangeslider_visible=False,
         dragmode='pan',
         hovermode='x',
@@ -352,6 +389,10 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
             range=[0, 100],
         ),
         yaxis3=dict(
+            title='Stochastic',
+            range=[0, 100],
+        ),
+        yaxis4=dict(
             title='Volume',
             showgrid=False,
         ),
@@ -361,7 +402,7 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
         fig,
         use_container_width=True,
         config={
-            "scrollZoom": True,  # Enable mouse wheel zoom
+            "scrollZoom": True,
             "displayModeBar": True
         }
     )
