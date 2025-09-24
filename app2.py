@@ -78,10 +78,10 @@ def find_pivots(series, window=3, mode='high'):
     pivots = []
     for i in range(window, len(series)-window):
         if mode == 'high':
-            if series[i] == max(series[i-window:i+window+1]):
+            if series.iloc[i] == max(series[i-window:i+window+1]):
                 pivots.append(i)
         else:
-            if series[i] == min(series[i-window:i+window+1]):
+            if series.iloc[i] == min(series[i-window:i+window+1]):
                 pivots.append(i)
     return pivots
 
@@ -95,15 +95,6 @@ def compute_rsi(series, period=14):
 
 # ========== UI Sections ========== #
 def ema_controls():
-    def on_ema_change():
-        st.session_state['show_chart_auto2'] = True
-    def add_ema_callback():
-        st.session_state['ema_list'].append({'period': 20, 'visible': True})
-        st.session_state['show_chart_auto2'] = True
-    def remove_ema_callback():
-        if len(st.session_state['ema_list']) > 1:
-            st.session_state['ema_list'].pop()
-            st.session_state['show_chart_auto2'] = True
     st.markdown("<div style='background-color:#e3e6ea;padding:10px 0 10px 0;margin-bottom:10px;'><b>Indicators: Exponential Moving Average (EMA)</b>", unsafe_allow_html=True)
     ema_cols = st.columns([2,2,2,2,2])
     for i, ema in enumerate(st.session_state['ema_list']):
@@ -153,13 +144,9 @@ def toolbar_and_date():
     return symbol, interval, start_date, end_date
 
 def bollinger_toggle():
-    def on_bollinger_toggle():
-        st.session_state['show_chart_auto2'] = True
     return st.checkbox("Show Bollinger Bands", value=False, key="show_bollinger", on_change=on_bollinger_toggle)
 
 def pivot_toggles():
-    def on_pivot_toggle():
-        st.session_state['show_chart_auto2'] = True
     st.markdown("<div style='background-color:#e3e6ea;padding:10px 0 10px 0;margin-bottom:10px;'><b>Technical Analysis: Pivots</b>", unsafe_allow_html=True)
     pivot_col1, pivot_col2 = st.columns(2)
     with pivot_col1:
@@ -407,9 +394,6 @@ def main():
     if 'scanner_progress_queue' not in st.session_state:
         st.session_state['scanner_progress_queue'] = queue.Queue()
     scan_running = st.session_state['scanner_status'] == 'running'
-    scan_btn = st.sidebar.button("Scan for Pattern", key="scan_btn", disabled=scan_running)
-    cancel_btn = st.sidebar.button("Cancel Scan", key="cancel_btn", disabled=not scan_running)
-
     # --- Drawer/Sidebar: Candlestick Pattern Scanner ---
     st.sidebar.header("Candlestick Pattern Scanner")
     candlestick_patterns = [
@@ -418,7 +402,8 @@ def main():
         "3 White Soldiers", "3 Black Crows", "Sandwich"
     ]
     selected_pattern = st.sidebar.selectbox("Select Candlestick Pattern", candlestick_patterns, key="pattern_select")
-
+    st.sidebar.button("Scan for Pattern", on_click=lambda: start_scan(selected_pattern, interval, start_date, end_date), disabled=scan_running, key="scan_btn")
+    st.sidebar.button("Cancel Scan", on_click=cancel_scan, disabled=not scan_running, key="cancel_btn")
     # Check for results from the scanner thread
     try:
         while not st.session_state['scanner_queue'].empty():
@@ -433,39 +418,6 @@ def main():
             st.session_state['scanner_cancel'] = False
     except Exception:
         pass
-
-    if scan_btn and selected_pattern:
-        if st.session_state['scanner_status'] != 'running':
-            st.session_state['scanner_status'] = 'running'
-            st.session_state['scanner_results'] = []
-            st.session_state['scanner_pattern'] = selected_pattern
-            st.session_state['scanner_toast'] = False
-            st.session_state['show_results_drawer'] = True
-            st.session_state['scanner_cancel'] = False
-            st.session_state['scanner_cancel_event'].clear()
-            # Use ThreadPoolExecutor to manage threads efficiently
-            executor = getattr(st.session_state, 'scanner_executor', None)
-            if executor is None:
-                executor = ThreadPoolExecutor(max_workers=2)
-                st.session_state['scanner_executor'] = executor
-            # Create a progress queue for UI updates
-            if 'scanner_progress_queue' not in st.session_state:
-                st.session_state['scanner_progress_queue'] = queue.Queue()
-            executor.submit(
-                scanner_thread,
-                selected_pattern, interval, start_date, end_date,
-                st.session_state['scanner_queue'],
-                st.session_state['scanner_cancel_event'],
-                st.session_state['scanner_progress_queue']
-            )
-            # Immediately update button states
-            scan_running = True
-    # Cancel scan logic: set the cancel event to stop the scanner thread
-    if cancel_btn and st.session_state['scanner_status'] == 'running':
-        st.session_state['scanner_cancel'] = True
-        st.session_state['scanner_cancel_event'].set()
-        # Immediately update button states
-        scan_running = False
     # Show scanning progress in UI (live update with loop)
     progress_placeholder = st.sidebar.empty()
     if st.session_state['scanner_status'] == 'running':
@@ -490,4 +442,54 @@ def main():
     if st.session_state['scanner_status'] == 'running':
         st.sidebar.info("Scanning all stocks for pattern")
 
-main()
+# --- Centralized State Transition Functions ---
+def start_scan(selected_pattern, interval, start_date, end_date):
+    st.session_state['scanner_status'] = 'running'
+    st.session_state['scanner_results'] = []
+    st.session_state['scanner_pattern'] = selected_pattern
+    st.session_state['scanner_toast'] = False
+    st.session_state['show_results_drawer'] = True
+    st.session_state['scanner_cancel'] = False
+    st.session_state['scanner_cancel_event'].clear()
+    executor = getattr(st.session_state, 'scanner_executor', None)
+    if executor is None:
+        executor = ThreadPoolExecutor(max_workers=2)
+        st.session_state['scanner_executor'] = executor
+    if 'scanner_progress_queue' not in st.session_state:
+        st.session_state['scanner_progress_queue'] = queue.Queue()
+    executor.submit(
+        scanner_thread,
+        selected_pattern, interval, start_date, end_date,
+        st.session_state['scanner_queue'],
+        st.session_state['scanner_cancel_event'],
+        st.session_state['scanner_progress_queue']
+    )
+
+def cancel_scan():
+    st.session_state['scanner_cancel'] = True
+    st.session_state['scanner_cancel_event'].set()
+    st.session_state['scanner_status'] = 'idle'
+
+def on_ema_change():
+    st.session_state['show_chart_auto2'] = True
+
+def add_ema_callback():
+    st.session_state['ema_list'].append({'period': 20, 'visible': True})
+    st.session_state['show_chart_auto2'] = True
+
+def remove_ema_callback():
+    if len(st.session_state['ema_list']) > 1:
+        st.session_state['ema_list'].pop()
+        st.session_state['show_chart_auto2'] = True
+
+def on_bollinger_toggle():
+    st.session_state['show_chart_auto2'] = True
+
+def on_pivot_toggle():
+    st.session_state['show_chart_auto2'] = True
+
+def on_dow_theory_toggle():
+    st.session_state['show_chart_auto2'] = True
+
+if __name__ == "__main__":
+    main()
