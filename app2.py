@@ -1,4 +1,13 @@
 
+# --- Bollinger Bands Toggle (place after Streamlit setup, before chart rendering) ---
+def on_bollinger_toggle():
+    st.session_state['show_chart_auto2'] = True
+
+# ...existing code...
+
+# Place this just before chart rendering logic:
+# show_bollinger = st.checkbox("Show Bollinger Bands", value=False, key="show_bollinger", on_change=on_bollinger_toggle)
+
 # --- Technical Analysis Panel: Custom Strategy Input ---
 def show_custom_strategy_panel():
     st.markdown("<div style='background-color:#e3e6ea;padding:10px 0 10px 0;margin-bottom:10px;'><b>Technical Analysis: Custom Strategy</b>", unsafe_allow_html=True)
@@ -115,6 +124,12 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 import numpy as np
 
+## --- Bollinger Bands Toggle (place before chart rendering) ---
+def on_bollinger_toggle():
+    st.session_state['show_chart_auto2'] = True
+
+show_bollinger = st.checkbox("Show Bollinger Bands", value=False, key="show_bollinger", on_change=on_bollinger_toggle)
+
 # --- Pivot High/Low Toggle ---
 st.markdown("<div style='background-color:#e3e6ea;padding:10px 0 10px 0;margin-bottom:10px;'><b>Technical Analysis: Pivots</b>", unsafe_allow_html=True)
 def on_pivot_toggle():
@@ -199,7 +214,40 @@ if show_chart:
             yaxis='y2',
             opacity=0.4
         ))
-        # EMA overlays (use full history, plot only visible period)
+        # Volume 20-period moving average
+        vol_ma20 = full_data['Volume'].rolling(window=20).mean().loc[chart_data_window.index]
+        fig.add_trace(go.Scatter(
+            x=chart_data_window.index,
+            y=vol_ma20,
+            mode='lines',
+            name='Volume MA 20',
+            yaxis='y2',
+            line=dict(color='orange', width=2, dash='dash')
+        ))
+    # EMA overlays (use full history, plot only visible period)
+        # Bollinger Bands (if enabled)
+        if show_bollinger:
+            close_full = full_data['Close']
+            bb_ma = close_full.rolling(window=20).mean().loc[chart_data_window.index]
+            bb_std = close_full.rolling(window=20).std().loc[chart_data_window.index]
+            upper_band = bb_ma + 2 * bb_std
+            lower_band = bb_ma - 2 * bb_std
+            fig.add_trace(go.Scatter(
+                x=chart_data_window.index,
+                y=upper_band,
+                mode='lines',
+                name='BB Upper',
+                line=dict(color='blue', width=1, dash='dot'),
+                opacity=0.7
+            ))
+            fig.add_trace(go.Scatter(
+                x=chart_data_window.index,
+                y=lower_band,
+                mode='lines',
+                name='BB Lower',
+                line=dict(color='blue', width=1, dash='dot'),
+                opacity=0.7
+            ))
         color_cycle = ['#e377c2', '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
         for i, ema in enumerate(st.session_state['ema_list']):
             if ema['visible']:
