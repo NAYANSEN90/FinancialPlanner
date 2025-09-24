@@ -1,9 +1,9 @@
-
 from concurrent.futures import ThreadPoolExecutor
 from scanner import scan_stocks_for_pattern
 import streamlit as st
 import threading
 import queue
+from analysis import determine_dow_theory_regions
 
 def scanner_thread(pattern_name, interval, start_date, end_date, result_queue, cancel_event, progress_queue=None):
     def progress_callback(symbol):
@@ -290,6 +290,32 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
             name='Pivot Low',
             hoverinfo='x+y+name'
         ))
+    # --- Dow Theory Regions and Markers ---
+    show_dow_theory = st.session_state.get('show_dow_theory', False)
+    if show_dow_theory and (pivot_high_indices or pivot_low_indices):
+        regions = determine_dow_theory_regions(chart_data_window, chart_data_window.index[pivot_high_indices], chart_data_window.index[pivot_low_indices])
+        region_colors = {'Uptrend': 'rgba(0,200,0,0.08)', 'Downtrend': 'rgba(200,0,0,0.08)', 'Sideways': 'rgba(120,120,120,0.08)'}
+        for region in regions:
+            fig.add_vrect(
+                x0=region['start'], x1=region['end'],
+                fillcolor=region_colors[region['trend']],
+                opacity=0.25,
+                layer="below",
+                line_width=0
+            )
+        for region in regions:
+            idx = region['start']
+            trend = region['trend']
+            color = {'Uptrend': 'blue', 'Downtrend': 'orange', 'Sideways': 'gray'}[trend]
+            fig.add_trace(go.Scatter(
+                x=[idx],
+                y=[chart_data_window['Close'].loc[idx]],
+                mode='markers',
+                marker=dict(symbol='star', color=color, size=18, line=dict(width=2, color='black')),
+                name=f'Dow {trend}',
+                hoverinfo='x+y+name+text',
+                text=[trend]
+            ))
     fig.update_layout(
         title=f'{symbol} Candlestick Chart',
         xaxis_title='Date',
@@ -378,11 +404,13 @@ def main():
         st.session_state['scanner_cancel_event'] = threading.Event()
     if 'scanner_queue' not in st.session_state:
         st.session_state['scanner_queue'] = queue.Queue()
+    if 'scanner_progress_queue' not in st.session_state:
+        st.session_state['scanner_progress_queue'] = queue.Queue()
     scan_running = st.session_state['scanner_status'] == 'running'
     scan_btn = st.sidebar.button("Scan for Pattern", key="scan_btn", disabled=scan_running)
     cancel_btn = st.sidebar.button("Cancel Scan", key="cancel_btn", disabled=not scan_running)
 
-    # --- Drawer/Sidebar: Candlestick Pattern Selector ---
+    # --- Drawer/Sidebar: Candlestick Pattern Scanner ---
     st.sidebar.header("Candlestick Pattern Scanner")
     candlestick_patterns = [
         "Hammer", "Inverted Hammer", "Bullish Engulfing", "Bearish Engulfing", "Morning Star", "Evening Star",
@@ -430,31 +458,36 @@ def main():
                 st.session_state['scanner_cancel_event'],
                 st.session_state['scanner_progress_queue']
             )
-
+            # Immediately update button states
+            scan_running = True
     # Cancel scan logic: set the cancel event to stop the scanner thread
     if cancel_btn and st.session_state['scanner_status'] == 'running':
         st.session_state['scanner_cancel'] = True
         st.session_state['scanner_cancel_event'].set()
-    # Show scanning progress in UI
-    current_scanning = None
-    try:
-        while not st.session_state.get('scanner_progress_queue', queue.Queue()).empty():
-            current_scanning = st.session_state['scanner_progress_queue'].get_nowait()
-    except Exception:
-        pass
-    if st.session_state['scanner_status'] == 'running' and current_scanning:
-        st.sidebar.info(f"Scanning: {current_scanning}")
-    if cancel_btn and st.session_state['scanner_status'] == 'running':
-        st.session_state['scanner_cancel'] = True
-        st.session_state['scanner_cancel_event'].set()
-
+        # Immediately update button states
+        scan_running = False
+    # Show scanning progress in UI (live update with loop)
+    progress_placeholder = st.sidebar.empty()
+    if st.session_state['scanner_status'] == 'running':
+        import time
+        last_scanned = None
+        for _ in range(300):  # ~30 seconds
+            try:
+                while not st.session_state['scanner_progress_queue'].empty():
+                    last_scanned = st.session_state['scanner_progress_queue'].get_nowait()
+            except Exception:
+                pass
+            if last_scanned:
+                progress_placeholder.info(f"Scanning: {last_scanned}")
+            if st.session_state['scanner_status'] != 'running':
+                break
+            time.sleep(0.1)
     # Toast alert when scan is done
     if st.session_state.get('scanner_toast', False):
         st.sidebar.success(f"Scan done: {len(st.session_state['scanner_results'])} results found.")
         st.session_state['scanner_toast'] = False
-
     # Show status and results in drawer
     if st.session_state['scanner_status'] == 'running':
-        st.sidebar.info("Scanning all stocks for pattern... (non-blocking)")
+        st.sidebar.info("Scanning all stocks for pattern")
 
 main()

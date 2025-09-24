@@ -1,3 +1,17 @@
+# Utility to get all stock symbols from EQUITY_L.csv
+import pandas as pd
+def get_all_stock_symbols():
+    import os
+    import warnings
+    csv_path = "EQUITY_L.csv"
+    if not os.path.exists(csv_path):
+        warnings.warn(f"Stock list CSV not found: {csv_path}")
+        return []
+    stock_df = pd.read_csv(csv_path)
+    if 'SYMBOL' not in stock_df.columns or stock_df.empty:
+        warnings.warn(f"Stock list CSV is empty or missing SYMBOL column: {csv_path}")
+        return []
+    return stock_df['SYMBOL'].dropna().unique().tolist()
 import yfinance as yf
 import pandas as pd
 
