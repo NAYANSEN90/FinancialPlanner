@@ -197,31 +197,37 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
     if chart_data_window.empty:
         st.warning("No chart data available for this stock.")
         return
-    fig = go.Figure()
+    from plotly.subplots import make_subplots
+    rsi_full = compute_rsi(full_data['Close'])
+    rsi = rsi_full.loc[chart_data_window.index]
+    fig = make_subplots(
+        rows=3, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.04,
+        row_heights=[0.6, 0.2, 0.2],
+        subplot_titles=(f"{symbol} Candlestick Chart", f"{symbol} RSI (14)", "Volume")
+    )
+    # Candlestick chart (row 1)
     fig.add_trace(go.Candlestick(
         x=chart_data_window.index,
         open=chart_data_window['Open'],
         high=chart_data_window['High'],
         low=chart_data_window['Low'],
         close=chart_data_window['Close'],
-        name='Candlestick'))
-    fig.add_trace(go.Bar(
-        x=chart_data_window.index,
-        y=chart_data_window['Volume'],
-        name='Volume',
-        marker_color='rgba(50,50,150,0.7)',
-        yaxis='y2',
-        opacity=0.4
-    ))
-    vol_ma20 = full_data['Volume'].rolling(window=20).mean().loc[chart_data_window.index]
-    fig.add_trace(go.Scatter(
-        x=chart_data_window.index,
-        y=vol_ma20,
-        mode='lines',
-        name='Volume MA 20',
-        yaxis='y2',
-        line=dict(color='orange', width=2, dash='dash')
-    ))
+        name='Candlestick'), row=1, col=1)
+    # EMA, Bollinger, Pivots, Dow Theory (row 1)
+    color_cycle = ['#e377c2', '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+    for i, ema in enumerate(st.session_state['ema_list']):
+        if ema['visible']:
+            ema_series_full = full_data['Close'].ewm(span=ema['period'], adjust=False).mean()
+            ema_series = ema_series_full.loc[chart_data_window.index]
+            fig.add_trace(go.Scatter(
+                x=chart_data_window.index,
+                y=ema_series,
+                mode='lines',
+                name=f'EMA {ema["period"]}',
+                line=dict(color=color_cycle[i % len(color_cycle)], width=2)
+            ), row=1, col=1)
     if show_bollinger:
         close_full = full_data['Close']
         bb_ma = close_full.rolling(window=20).mean().loc[chart_data_window.index]
@@ -235,7 +241,7 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
             name='BB Upper',
             line=dict(color='blue', width=1, dash='dot'),
             opacity=0.7
-        ))
+        ), row=1, col=1)
         fig.add_trace(go.Scatter(
             x=chart_data_window.index,
             y=lower_band,
@@ -243,19 +249,7 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
             name='BB Lower',
             line=dict(color='blue', width=1, dash='dot'),
             opacity=0.7
-        ))
-    color_cycle = ['#e377c2', '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
-    for i, ema in enumerate(st.session_state['ema_list']):
-        if ema['visible']:
-            ema_series_full = full_data['Close'].ewm(span=ema['period'], adjust=False).mean()
-            ema_series = ema_series_full.loc[chart_data_window.index]
-            fig.add_trace(go.Scatter(
-                x=chart_data_window.index,
-                y=ema_series,
-                mode='lines',
-                name=f'EMA {ema["period"]}',
-                line=dict(color=color_cycle[i % len(color_cycle)], width=2)
-            ))
+        ), row=1, col=1)
     pivot_marker_size = 16
     pivot_high_indices = find_pivots(chart_data_window['High'], window=3, mode='high') if show_pivot_highs else []
     pivot_low_indices = find_pivots(chart_data_window['Low'], window=3, mode='low') if show_pivot_lows else []
@@ -267,7 +261,7 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
             marker=dict(symbol='triangle-up', color='red', size=pivot_marker_size),
             name='Pivot High',
             hoverinfo='x+y+name'
-        ))
+        ), row=1, col=1)
     if show_pivot_lows:
         fig.add_trace(go.Scatter(
             x=chart_data_window.index[pivot_low_indices],
@@ -276,8 +270,7 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
             marker=dict(symbol='triangle-down', color='green', size=pivot_marker_size),
             name='Pivot Low',
             hoverinfo='x+y+name'
-        ))
-    # --- Dow Theory Regions and Markers ---
+        ), row=1, col=1)
     show_dow_theory = st.session_state.get('show_dow_theory', False)
     if show_dow_theory and (pivot_high_indices or pivot_low_indices):
         regions = determine_dow_theory_regions(chart_data_window, chart_data_window.index[pivot_high_indices], chart_data_window.index[pivot_low_indices])
@@ -288,7 +281,8 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
                 fillcolor=region_colors[region['trend']],
                 opacity=0.25,
                 layer="below",
-                line_width=0
+                line_width=0,
+                row=1, col=1
             )
         for region in regions:
             idx = region['start']
@@ -302,15 +296,37 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
                 name=f'Dow {trend}',
                 hoverinfo='x+y+name+text',
                 text=[trend]
-            ))
+            ), row=1, col=1)
+    # RSI (row 2)
+    fig.add_trace(go.Scatter(
+        x=chart_data_window.index,
+        y=rsi,
+        mode='lines',
+        name='RSI',
+        line=dict(color='purple', width=2)
+    ), row=2, col=1)
+    fig.add_hline(y=60, line_dash="dash", line_color="red", annotation_text="Overbought", annotation_position="top right", row=2)
+    fig.add_hline(y=40, line_dash="dash", line_color="green", annotation_text="Oversold", annotation_position="bottom right", row=2)
+    # Volume (row 3)
+    fig.add_trace(go.Bar(
+        x=chart_data_window.index,
+        y=chart_data_window['Volume'],
+        name='Volume',
+        marker_color='rgba(50,50,150,0.7)',
+        opacity=0.4
+    ), row=3, col=1)
+    vol_ma20 = full_data['Volume'].rolling(window=20).mean().loc[chart_data_window.index]
+    fig.add_trace(go.Scatter(
+        x=chart_data_window.index,
+        y=vol_ma20,
+        mode='lines',
+        name='Volume MA 20',
+        line=dict(color='orange', width=2, dash='dash')
+    ), row=3, col=1)
     fig.update_layout(
-        title=f'{symbol} Candlestick Chart',
-        xaxis_title='Date',
-        yaxis_title='',
-        yaxis2=dict(title='Volume', overlaying='y', side='right', showgrid=False, range=[0, chart_data_window['Volume'].max()*4]),
+        height=1000,
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
         xaxis_rangeslider_visible=False,
-        height=700,
         dragmode='pan',
         hovermode='x',
         xaxis=dict(
@@ -330,37 +346,25 @@ def render_charts(symbol, interval, start_date, end_date, show_bollinger, show_p
             spikedash='dot',
             spikethickness=1,
             spikecolor='black',
-        )
+        ),
+        yaxis2=dict(
+            title='RSI',
+            range=[0, 100],
+        ),
+        yaxis3=dict(
+            title='Volume',
+            showgrid=False,
+        ),
+        margin=dict(l=40, r=40, t=40, b=40)
     )
     st.plotly_chart(
         fig,
         use_container_width=True,
         config={
-            "scrollZoom": True,
-            "modeBarButtonsToAdd": ["drawline", "eraseshape"],
+            "scrollZoom": True,  # Enable mouse wheel zoom
             "displayModeBar": True
         }
     )
-    rsi_full = compute_rsi(full_data['Close'])
-    rsi = rsi_full.loc[chart_data_window.index]
-    rsi_fig = go.Figure()
-    rsi_fig.add_trace(go.Scatter(
-        x=chart_data_window.index,
-        y=rsi,
-        mode='lines',
-        name='RSI',
-        line=dict(color='purple', width=2)
-    ))
-    rsi_fig.add_hline(y=60, line_dash="dash", line_color="red", annotation_text="Overbought", annotation_position="top right")
-    rsi_fig.add_hline(y=40, line_dash="dash", line_color="green", annotation_text="Oversold", annotation_position="bottom right")
-    rsi_fig.update_layout(
-        title=f"{symbol} RSI (14)",
-        xaxis_title='Date',
-        yaxis_title='RSI',
-        height=250,
-        margin=dict(l=40, r=40, t=40, b=40)
-    )
-    st.plotly_chart(rsi_fig, use_container_width=True)
 
 
 
