@@ -4,6 +4,7 @@ import streamlit as st
 import threading
 import queue
 from analysis import determine_dow_theory_regions
+from pattern_scanner import scan_stocks_for_double_top
 
 def scanner_thread(pattern_name, interval, start_date, end_date, result_queue, cancel_event, progress_queue=None):
     def progress_callback(symbol):
@@ -438,6 +439,13 @@ def main():
         st.session_state['scanner_queue'] = queue.Queue()
     if 'scanner_progress_queue' not in st.session_state:
         st.session_state['scanner_progress_queue'] = queue.Queue()
+    # --- Chart Pattern Scanner session state keys ---
+    if 'chart_scanner_status' not in st.session_state:
+        st.session_state['chart_scanner_status'] = 'idle'
+    if 'chart_scanner_cancel_event' not in st.session_state:
+        st.session_state['chart_scanner_cancel_event'] = threading.Event()
+    if 'chart_scanner_results' not in st.session_state:
+        st.session_state['chart_scanner_results'] = []
     scan_running = st.session_state['scanner_status'] == 'running'
     # --- Drawer/Sidebar: Candlestick Pattern Scanner ---
     st.sidebar.header("Candlestick Pattern Scanner")
@@ -486,6 +494,176 @@ def main():
     # Show status and results in drawer
     if st.session_state['scanner_status'] == 'running':
         st.sidebar.info("Scanning all stocks for pattern")
+    # --- Drawer/Sidebar: Chart Pattern Scanner ---
+    st.sidebar.header("Chart Pattern Scanner")
+    chart_patterns = [
+        "Double Top",  # Add more patterns here as implemented
+    ]
+    selected_chart_pattern = st.sidebar.selectbox("Select Chart Pattern", chart_patterns, key="chart_pattern_select")
+    chart_scan_running = st.session_state.get('chart_scanner_status', 'idle') == 'running'
+    def start_chart_pattern_scan():
+        st.session_state['chart_scanner_status'] = 'running'
+        st.session_state['chart_scanner_results'] = []
+        st.session_state['chart_scanner_cancel_event'].clear()
+        chart_scanner_queue = st.session_state['chart_scanner_queue']
+        chart_scanner_progress_queue = st.session_state['chart_scanner_progress_queue']
+        cancel_event = st.session_state['chart_scanner_cancel_event']
+        local_interval = interval
+        local_start_date = start_date
+        local_end_date = end_date
+        def chart_pattern_scan_thread(interval, start_date, end_date, cancel_event, queue, progress_queue):
+            import time
+            from stock_data import get_all_stock_symbols, fetch_stock_chart_data
+            from chart_patterns import detect_double_top
+            results = []
+            symbols = get_all_stock_symbols()
+            for symbol in symbols:
+                if cancel_event.is_set():
+                    break
+                progress_queue.put(symbol)
+                chart_data = fetch_stock_chart_data(symbol, interval=interval, start_date=start_date, end_date=end_date)
+                if chart_data is None or chart_data.empty:
+                    continue
+                double_tops = detect_double_top(chart_data)
+                if double_tops:
+                    first_top_idx, pivot_low_idx, second_top_idx = double_tops[0]
+                    dt_index = chart_data.index if hasattr(chart_data.index, 'to_list') else chart_data['Date']
+                    result = {
+                        "symbol": symbol,
+                        "first_top_idx": first_top_idx,
+                        "first_top_date": str(dt_index[first_top_idx]),
+                        "pivot_low_idx": pivot_low_idx,
+                        "pivot_low_date": str(dt_index[pivot_low_idx]),
+                        "second_top_idx": second_top_idx,
+                        "second_top_date": str(dt_index[second_top_idx]),
+                    }
+                    results.append(result)
+                time.sleep(0.01)
+            queue.put({
+                'results': results,
+                'cancelled': cancel_event.is_set()
+            })
+        executor = getattr(st.session_state, 'scanner_executor', None)
+        if executor is None:
+            executor = ThreadPoolExecutor(max_workers=2)
+            st.session_state['scanner_executor'] = executor
+        executor.submit(
+            chart_pattern_scan_thread,
+            local_interval, local_start_date, local_end_date,
+            cancel_event, chart_scanner_queue, chart_scanner_progress_queue
+        )
+    scan_chart_pattern_btn = st.sidebar.button("Scan for Chart Pattern", on_click=start_chart_pattern_scan, disabled=chart_scan_running, key="scan_chart_pattern_btn")
+    cancel_chart_pattern_btn = st.sidebar.button("Cancel Chart Pattern Scan", on_click=lambda: cancel_chart_pattern_scan(), disabled=not chart_scan_running, key="cancel_chart_pattern_btn")
+    if 'chart_scanner_status' not in st.session_state:
+        st.session_state['chart_scanner_status'] = 'idle'
+    if 'chart_scanner_cancel_event' not in st.session_state:
+        st.session_state['chart_scanner_cancel_event'] = threading.Event()
+    if 'chart_scanner_results' not in st.session_state:
+        st.session_state['chart_scanner_results'] = []
+    if 'chart_scanner_queue' not in st.session_state:
+        st.session_state['chart_scanner_queue'] = queue.Queue()
+    if 'chart_scanner_progress_queue' not in st.session_state:
+        st.session_state['chart_scanner_progress_queue'] = queue.Queue()
+    if scan_chart_pattern_btn:
+        st.session_state['chart_scanner_status'] = 'running'
+        st.session_state['chart_scanner_results'] = []
+        st.session_state['chart_scanner_cancel_event'].clear()
+        chart_scanner_queue = st.session_state['chart_scanner_queue']
+        chart_scanner_progress_queue = st.session_state['chart_scanner_progress_queue']
+        cancel_event = st.session_state['chart_scanner_cancel_event']
+        local_interval = interval
+        local_start_date = start_date
+        local_end_date = end_date
+        def chart_pattern_scan_thread(interval, start_date, end_date, cancel_event, queue, progress_queue):
+            import time
+            from stock_data import get_all_stock_symbols, fetch_stock_chart_data
+            from chart_patterns import detect_double_top
+            results = []
+            symbols = get_all_stock_symbols()
+            for symbol in symbols:
+                if cancel_event.is_set():
+                    break
+                progress_queue.put(symbol)
+                chart_data = fetch_stock_chart_data(symbol, interval=interval, start_date=start_date, end_date=end_date)
+                if chart_data is None or chart_data.empty:
+                    continue
+                double_tops = detect_double_top(chart_data)
+                if double_tops:
+                    first_top_idx, pivot_low_idx, second_top_idx = double_tops[0]
+                    dt_index = chart_data.index if hasattr(chart_data.index, 'to_list') else chart_data['Date']
+                    result = {
+                        "symbol": symbol,
+                        "first_top_idx": first_top_idx,
+                        "first_top_date": str(dt_index[first_top_idx]),
+                        "pivot_low_idx": pivot_low_idx,
+                        "pivot_low_date": str(dt_index[pivot_low_idx]),
+                        "second_top_idx": second_top_idx,
+                        "second_top_date": str(dt_index[second_top_idx]),
+                    }
+                    results.append(result)
+                time.sleep(0.01)
+            queue.put({
+                'results': results,
+                'cancelled': cancel_event.is_set()
+            })
+        # Use the same ThreadPoolExecutor for both scans
+        executor = getattr(st.session_state, 'scanner_executor', None)
+        if executor is None:
+            executor = ThreadPoolExecutor(max_workers=2)
+            st.session_state['scanner_executor'] = executor
+        executor.submit(
+            chart_pattern_scan_thread,
+            local_interval, local_start_date, local_end_date,
+            cancel_event, chart_scanner_queue, chart_scanner_progress_queue
+        )
+    # Check for results from the chart pattern scanner thread
+    try:
+        chart_scanner_queue = st.session_state.get('chart_scanner_queue')
+        if chart_scanner_queue:
+            while not chart_scanner_queue.empty():
+                result = chart_scanner_queue.get_nowait()
+                st.session_state['chart_scanner_results'] = result['results']
+                if result['cancelled']:
+                    st.session_state['chart_scanner_status'] = 'idle'
+                    import streamlit as stlib
+                    stlib.experimental_rerun()
+                else:
+                    st.session_state['chart_scanner_status'] = 'done'
+                    import streamlit as stlib
+                    stlib.experimental_rerun()
+    except Exception:
+        pass
+    # Show scanning progress in UI (live update with loop)
+    chart_progress_placeholder = st.sidebar.empty()
+    if st.session_state['chart_scanner_status'] == 'running':
+        import time
+        last_scanned = None
+        chart_scanner_progress_queue = st.session_state['chart_scanner_progress_queue']
+        for _ in range(300):  # ~30 seconds
+            try:
+                while not chart_scanner_progress_queue.empty():
+                    last_scanned = chart_scanner_progress_queue.get_nowait()
+            except Exception:
+                pass
+            if last_scanned:
+                chart_progress_placeholder.info(f"Scanning: {last_scanned}")
+            if st.session_state['chart_scanner_status'] != 'running':
+                break
+            time.sleep(0.1)
+    if st.session_state['chart_scanner_status'] == 'running':
+        st.sidebar.info(f"Scanning for {selected_chart_pattern}...")
+    if st.session_state['chart_scanner_status'] == 'done':
+        results = st.session_state['chart_scanner_results']
+        if results:
+            st.sidebar.success(f"Found {len(results)} stocks with {selected_chart_pattern}")
+            for r in results:
+                st.sidebar.write(f"{r['symbol']}: Top1 {r['first_top_date']}, Pivot {r['pivot_low_date']}, Top2 {r['second_top_date']}")
+        else:
+            st.sidebar.info(f"No {selected_chart_pattern} found in any stock.")
+
+def cancel_chart_pattern_scan():
+    st.session_state['chart_scanner_cancel_event'].set()
+    st.session_state['chart_scanner_status'] = 'idle'
 
 # --- Centralized State Transition Functions ---
 def start_scan(selected_pattern, interval, start_date, end_date):
