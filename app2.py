@@ -497,7 +497,12 @@ def main():
     # --- Drawer/Sidebar: Chart Pattern Scanner ---
     st.sidebar.header("Chart Pattern Scanner")
     chart_patterns = [
-        "Double Top",  # Add more patterns here as implemented
+        "Double Top",
+        "Double Bottom",
+        "Head and Shoulders",
+        "Inverted Head and Shoulders",
+        "Flag and Pole",
+        "Inverted Flag and Pole"
     ]
     selected_chart_pattern = st.sidebar.selectbox("Select Chart Pattern", chart_patterns, key="chart_pattern_select")
     chart_scan_running = st.session_state.get('chart_scanner_status', 'idle') == 'running'
@@ -625,12 +630,10 @@ def main():
                 st.session_state['chart_scanner_results'] = result['results']
                 if result['cancelled']:
                     st.session_state['chart_scanner_status'] = 'idle'
-                    import streamlit as stlib
-                    stlib.experimental_rerun()
+                    # UI will update automatically on session state changes
                 else:
                     st.session_state['chart_scanner_status'] = 'done'
-                    import streamlit as stlib
-                    stlib.experimental_rerun()
+                    # UI will update automatically on session state changes
     except Exception:
         pass
     # Show scanning progress in UI (live update with loop)

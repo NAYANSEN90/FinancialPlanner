@@ -8,6 +8,37 @@ def detect_flag_and_pole(df):
     # Return list of (start_idx, end_idx) for detected patterns
     return []
 
+def detect_inverted_flag_and_pole(df, pole_lookback=10, flag_length=5, min_downtrend_pct=0.03, min_flag_retrace=0.01):
+    """
+    Detect inverted flag and pole pattern during a downtrend.
+    Args:
+        df: DataFrame with columns ['Open', 'High', 'Low', 'Close']
+        pole_lookback: Number of candles to look back for the pole (sharp downtrend)
+        flag_length: Number of candles for the flag (consolidation)
+        min_downtrend_pct: Minimum % drop for pole
+        min_flag_retrace: Minimum % retrace for flag
+    Returns:
+        List of tuples: (pole_start_idx, pole_end_idx, flag_start_idx, flag_end_idx)
+    """
+    results = []
+    closes = df['Close'].values
+    n = len(df)
+    for i in range(pole_lookback + flag_length, n):
+        pole_start = i - pole_lookback - flag_length
+        pole_end = i - flag_length
+        flag_start = pole_end
+        flag_end = i
+        if pole_start < 0:
+            continue
+        pole_drop = (closes[pole_start] - closes[pole_end]) / closes[pole_start]
+        flag_retrace = (closes[flag_end] - closes[flag_start]) / closes[pole_end]
+        # Pole: sharp downtrend, Flag: mild retrace up
+        if pole_drop >= min_downtrend_pct and flag_retrace >= min_flag_retrace:
+            # Check that flag is a mild upward consolidation
+            if all(closes[j] >= closes[flag_start] for j in range(flag_start, flag_end+1)):
+                results.append((pole_start, pole_end, flag_start, flag_end))
+    return results
+
 def detect_double_top(df, tolerance=0.005, min_separation=8, trend_lookback=10):
     """
     Detect double top patterns in OHLC DataFrame.
